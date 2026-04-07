@@ -78,11 +78,11 @@ disp(Bd);
 %% =========================================
 % DATA COLLECTION SETTINGS
 % =========================================
-T = 800;   % number of samples
+T = 1000;   % number of samples
 
 x0 = [0;
       0;
-      deg2rad(5);
+      deg2rad(45);
       0];
 
 %% =========================================
@@ -182,7 +182,7 @@ fprintf('||B_est - Bd|| = %g\n', norm(B_est - Bd));
 % DISCRETE LQR DESIGN
 % If dlqr exists, use it. Otherwise use iterative Riccati.
 % =========================================
-Q_lqr = diag([10 1 100 1]);
+Q_lqr = diag([10 1 300 1]);
 R_lqr = 1;
 
 disp('================ CONTROLLER DESIGN ===============');
@@ -221,6 +221,67 @@ end
 disp('LQR gain K_lqr:');
 disp(K_lqr);
 
+disp('LQR gain K_lqr:');
+disp(K_lqr);
+
+%% =========================================
+% ROBUSTNESS TEST (±5% variation in b and I)
+% =========================================
+disp('================ ROBUSTNESS TEST =================');
+
+b_values = [0.9*b, 1.1*b];
+I_values = [0.9*I, 1.1*I];
+
+for i = 1:length(b_values)
+    for j = 1:length(I_values)
+
+        b_test = b_values(i);
+        I_test = I_values(j);
+
+        a_test = M + m_body;
+        c_test = m_body * l;
+        d_test = I_test + m_body * l^2;
+        Delta_test = a_test*d_test + c_test^2;
+
+        A_test = [0, 1, 0, 0;
+                  0, -(d_test*b_test)/Delta_test, -(c_test*m_body*g*l)/Delta_test, 0;
+                  0, 0, 0, 1;
+                  0, -(c_test*b_test)/Delta_test, (a_test*m_body*g*l)/Delta_test, 0];
+
+        B_test = [0;
+                  d_test/Delta_test;
+                  0;
+                  c_test/Delta_test];
+
+        Maug_test = [A_test B_test;
+                     zeros(m, n+m)];
+
+        Md_test = expm(Maug_test * Ts);
+
+        Ad_test = Md_test(1:n,1:n);
+        Bd_test = Md_test(1:n,n+1:n+m);
+
+        Acl_test = Ad_test - Bd_test*K_lqr;
+        eig_test = eig(Acl_test);
+
+        fprintf('\n--- Test Case ---\n');
+        fprintf('b = %.4f, I = %.6f\n', b_test, I_test);
+        fprintf('Stable? %d\n', all(abs(eig_test) < 1));
+        fprintf('Max eigenvalue magnitude = %.4f\n', max(abs(eig_test)));
+
+        % quick simulation
+        x_sim = zeros(n, 1001);
+        x_sim(:,1) = [0;0;deg2rad(45);0];
+
+        for k = 1:300
+            u_sim = -K_lqr * x_sim(:,k);
+            x_sim(:,k+1) = Ad_test * x_sim(:,k) + Bd_test * u_sim;
+        end
+
+        fprintf('Final angle (deg) = %.4f\n', rad2deg(x_sim(3,end)));
+    end
+end
+
 %% =========================================
 % CLOSED-LOOP STABILITY CHECK
 % Standard convention: u = -K*x
@@ -253,15 +314,17 @@ disp(eig(Ad - Bd*K_lqr));
 % SIMPLE NUMERICAL RESPONSE CHECK
 % NO PLOTS, ONLY FINAL VALUES
 % =========================================
-x_test = zeros(n, 201);
-u_test = zeros(m, 200);
+Ntest = 1000;
+
+x_test = zeros(n, Ntest+1);
+u_test = zeros(m, Ntest);
 
 x_test(:,1) = [0;
                0;
-               deg2rad(10);
+               deg2rad(45);
                0];
 
-for k = 1:200
+for k = 1:Ntest
     u_test(:,k) = -K_lqr * x_test(:,k);
     x_test(:,k+1) = A_est * x_test(:,k) + B_est * u_test(:,k);
 end
@@ -287,3 +350,75 @@ save('SBR_DataDriven_AllInOne_Result.mat', ...
 
 disp('================ FINISHED ========================');
 disp('Saved results to SBR_DataDriven_AllInOne_Result.mat');
+
+%% =========================================
+% SAFE VIDEO GENERATION (WILL WORK)
+% =========================================
+
+opengl software   % force rendering
+
+v = VideoWriter('self_balancing_robot.mp4','MPEG-4');
+v.FrameRate = 10;
+open(v);
+
+fig = figure('Visible','on');
+
+wheel_radius = 0.05;
+body_length = 0.5;
+
+frame_count = 0;
+
+for k = 1:5:length(x_test)
+
+    clf(fig); hold on; grid on;
+    axis equal;
+    xlim([-1 1]);
+    ylim([-0.1 1]);
+
+    x_pos = x_test(1,k);
+    phi   = x_test(3,k);
+
+    wheel_x = x_pos;
+    wheel_y = wheel_radius;
+
+    body_x = wheel_x + body_length*sin(phi);
+    body_y = wheel_y + body_length*cos(phi);
+
+    % Ground
+    plot([-5 5],[0 0],'k','LineWidth',2);
+
+    % Wheel
+    theta = linspace(0,2*pi,50);
+    plot(wheel_x + wheel_radius*cos(theta), ...
+         wheel_y + wheel_radius*sin(theta), 'b','LineWidth',2);
+
+    % Body
+    plot([wheel_x body_x], [wheel_y body_y], 'r','LineWidth',4);
+
+    % COM
+    plot(body_x, body_y, 'ko','MarkerFaceColor','k');
+
+    title(sprintf('Time step = %d | Angle = %.2f deg', ...
+          k, rad2deg(phi)));
+
+    drawnow;   % REQUIRED
+
+    frame = getframe(fig);
+
+    % Safety check
+    if ~isempty(frame.cdata)
+        writeVideo(v, frame);
+        frame_count = frame_count + 1;
+    end
+end
+
+close(v);
+
+fprintf('Frames written: %d\n', frame_count);
+
+if frame_count > 0
+    disp('Video successfully saved!');
+    disp(fullfile(pwd, 'self_balancing_robot.mp4'));
+else
+    warning('No frames captured — video not created.');
+end
