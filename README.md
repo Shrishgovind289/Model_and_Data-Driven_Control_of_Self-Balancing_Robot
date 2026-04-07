@@ -3,4 +3,4 @@ This project proposes a hybrid control workflow for a two-wheeled self-balancing
 
 Overleaf Doc:- https://www.overleaf.com/project/696f208bb2a333fcd4b61b7c
 
-<video src="https://github.com/Shrishgovind289/EE800_Project_Shrishgovind_Model_and_Data_Driven_Control/blob/main/self_balancing_robot.mp4" autoplay loop width="320" height="240" controls></video>
+![Demo](demo.gif)
